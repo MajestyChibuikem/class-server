@@ -1,0 +1,148 @@
+{
+  "name": "classroom-code-sync",
+  "displayName": "Classroom Code Sync",
+  "description": "Real-time code synchronization for classroom teaching - enables teachers to broadcast code to students' VSCode",
+  "version": "0.1.0",
+  "publisher": "classroom-tools",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Education",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "classroomSync.teacher.startServer",
+        "title": "Classroom: Start Teaching Session (Teacher)",
+        "icon": "$(broadcast)"
+      },
+      {
+        "command": "classroomSync.teacher.stopServer",
+        "title": "Classroom: Stop Teaching Session (Teacher)",
+        "icon": "$(stop)"
+      },
+      {
+        "command": "classroomSync.teacher.configureFiles",
+        "title": "Classroom: Configure Synced Files (Teacher)",
+        "icon": "$(gear)"
+      },
+      {
+        "command": "classroomSync.teacher.showConnection",
+        "title": "Classroom: Show Connection Info (Teacher)",
+        "icon": "$(info)"
+      },
+      {
+        "command": "classroomSync.student.connect",
+        "title": "Classroom: Connect to Teaching Session (Student)",
+        "icon": "$(plug)"
+      },
+      {
+        "command": "classroomSync.student.disconnect",
+        "title": "Classroom: Disconnect from Session (Student)",
+        "icon": "$(debug-disconnect)"
+      },
+      {
+        "command": "classroomSync.student.copyToWorkspace",
+        "title": "Classroom: Copy Current File to Workspace (Student)",
+        "icon": "$(copy)"
+      }
+    ],
+    "configuration": {
+      "title": "Classroom Code Sync",
+      "properties": {
+        "classroomSync.server.port": {
+          "type": "number",
+          "default": 8765,
+          "description": "Default port for WebSocket server (teacher mode)",
+          "minimum": 1024,
+          "maximum": 65535
+        },
+        "classroomSync.server.requireAuth": {
+          "type": "boolean",
+          "default": false,
+          "description": "Require token authentication for student connections"
+        },
+        "classroomSync.sync.debounceMs": {
+          "type": "number",
+          "default": 500,
+          "description": "Debounce delay for file changes in milliseconds",
+          "minimum": 100,
+          "maximum": 5000
+        },
+        "classroomSync.sync.includePatterns": {
+          "type": "array",
+          "default": [],
+          "description": "Glob patterns for files to include in sync (empty = all files)",
+          "items": {
+            "type": "string"
+          }
+        },
+        "classroomSync.sync.excludePatterns": {
+          "type": "array",
+          "default": [
+            "**/.env",
+            "**/.env.*",
+            "**/node_modules/**",
+            "**/.git/**",
+            "**/*.key",
+            "**/*.pem",
+            "**/*.p12",
+            "**/*.pfx",
+            "**/credentials.json",
+            "**/.vscode/**"
+          ],
+          "description": "Glob patterns for files to exclude from sync",
+          "items": {
+            "type": "string"
+          }
+        },
+        "classroomSync.sync.maxFileSize": {
+          "type": "number",
+          "default": 1048576,
+          "description": "Maximum file size to sync in bytes (default: 1MB)",
+          "minimum": 1024,
+          "maximum": 10485760
+        },
+        "classroomSync.sync.rememberFilters": {
+          "type": "boolean",
+          "default": true,
+          "description": "Remember file filter settings between sessions"
+        },
+        "classroomSync.student.autoReconnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically reconnect to teacher on disconnect (student mode)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "node esbuild.js --production",
+    "watch": "node esbuild.js --watch",
+    "compile": "tsc -p ./",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.10",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "esbuild": "^0.19.0",
+    "eslint": "^8.54.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "ws": "^8.14.0",
+    "ip": "^2.0.0",
+    "nanoid": "^3.3.7",
+    "minimatch": "^9.0.3"
+  }
+}
