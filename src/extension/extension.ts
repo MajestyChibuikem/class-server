@@ -204,21 +204,40 @@ async function showConnectionInfo(): Promise<void> {
   // For now, show a simple information message
   const httpUrl = localIP ? urls.httpUrl : urls.httpLocalUrl;
   const wsUrl = localIP ? urls.wsUrl : urls.wsLocalUrl;
-  const info = [
-    `Connected Students: ${connectionCount}/50`,
-    `Browser URL: ${httpUrl}`,
-    `WebSocket URL (VSCode): ${wsUrl}`,
-    localIP ? `Local Network IP: ${localIP}` : 'Using localhost only',
-  ].join('\n');
+  
+  // Create detailed info message
+  let info = `Connected Students: ${connectionCount}/50\n\n`;
+  
+  if (localIP) {
+    info += `🌐 Network URL (same WiFi/LAN):\n${httpUrl}\n\n`;
+    info += `📱 Students on the same network can use this URL\n\n`;
+    info += `🖥️  Localhost URL (this computer only):\n${urls.httpLocalUrl}\n\n`;
+    info += `🔌 WebSocket URL (VSCode students): ${wsUrl}\n\n`;
+    info += `📍 Your Network IP: ${localIP}\n\n`;
+    info += `🌍 For remote connections (different networks):\n`;
+    info += `   Use tunneling service (ngrok, localtunnel, etc.)\n`;
+    info += `   See REMOTE_CONNECTION_GUIDE.md for details`;
+  } else {
+    info += `⚠️  Network IP not detected\n\n`;
+    info += `📱 Using localhost (only works on this computer):\n${httpUrl}\n\n`;
+    info += `💡 Tip: Connect to WiFi/LAN for network access\n\n`;
+    info += `🌍 For remote connections:\n`;
+    info += `   Use tunneling service (ngrok, localtunnel, etc.)\n`;
+    info += `   See REMOTE_CONNECTION_GUIDE.md for details`;
+  }
 
   vscode.window.showInformationMessage(
     info,
-    'Copy Browser URL',
+    localIP ? 'Copy Network URL' : 'Copy Localhost URL',
+    localIP ? 'Copy Localhost URL' : undefined,
     'Copy WebSocket URL'
   ).then((selection) => {
-    if (selection === 'Copy Browser URL') {
+    if (selection === 'Copy Network URL') {
       vscode.env.clipboard.writeText(httpUrl);
-      vscode.window.showInformationMessage('Browser URL copied to clipboard!');
+      vscode.window.showInformationMessage(`Network URL copied! Students on the same WiFi can use: ${httpUrl}`);
+    } else if (selection === 'Copy Localhost URL') {
+      vscode.env.clipboard.writeText(urls.httpLocalUrl);
+      vscode.window.showInformationMessage('Localhost URL copied to clipboard!');
     } else if (selection === 'Copy WebSocket URL') {
       vscode.env.clipboard.writeText(wsUrl);
       vscode.window.showInformationMessage('WebSocket URL copied to clipboard!');

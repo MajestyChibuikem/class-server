@@ -25,6 +25,10 @@ In the Extension Development Host window:
 2. Open it in any browser (Chrome, Firefox, Safari, etc.)
 3. You should see "Connected to teacher"
 
+**💡 For remote connections (different networks):**
+- Use a tunneling service like ngrok (see [REMOTE_SETUP.md](./REMOTE_SETUP.md))
+- The extension works with any URL - local or remote!
+
 ### 5. Test Real-time Sync
 1. In the Extension Development Host (teacher):
    - Open a code file (`.ts`, `.js`, `.py`, etc.)

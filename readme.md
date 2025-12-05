@@ -231,6 +231,22 @@ class-server/
 7. `src/extension/sync/FileFilter.ts` - Security filtering
 8. `src/extension/ui/ConnectionPanel.ts` - Teacher UI
 
+## Remote Connections
+
+The extension supports connections from **anywhere** using tunneling services:
+
+- **Same Network:** Automatic - works with local network IP
+- **Different Networks:** Use tunneling (ngrok, localtunnel, etc.) - see [REMOTE_CONNECTION_GUIDE.md](./REMOTE_CONNECTION_GUIDE.md)
+- **VSCode to VSCode:** Students can connect via WebSocket URL from any network
+
+The extension accepts any valid URL, so it works seamlessly with:
+- ✅ Local network IPs
+- ✅ Tunneling service URLs (ngrok, localtunnel)
+- ✅ VPN IPs
+- ✅ Port-forwarded URLs
+
+See [REMOTE_SETUP.md](./REMOTE_SETUP.md) for quick setup instructions.
+
 ## Next Steps
 
 [This section will be updated based on user feedback]
