@@ -14,7 +14,7 @@ export function getLocalNetworkIP(): string | null {
     for (const net of nets) {
       // Skip internal (loopback) and non-IPv4 addresses
       // Handle both string ('IPv4') and number (4) family values
-      const isIPv4 = net.family === 'IPv4' || net.family === 4;
+      const isIPv4 = net.family === 'IPv4' || (net.family as unknown) === 4;
       if (isIPv4 && !net.internal) {
         return net.address;
       }

@@ -18,7 +18,7 @@ export interface ClientConnection {
  */
 export class ConnectionManager {
   private connections: Map<string, ClientConnection> = new Map();
-  private readonly maxConnections: number = 50;
+  private readonly maxConnections: number = 150;
   private readonly pingInterval: number = 30000; // 30 seconds
   private readonly timeoutInterval: number = 60000; // 60 seconds
   private pingTimer?: NodeJS.Timeout;

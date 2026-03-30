@@ -1,377 +1,351 @@
 import * as vscode from 'vscode';
 import { StatusBarManager, Mode } from './ui/StatusBar';
+import { ConnectionPanel } from './ui/ConnectionPanel';
 import { WebSocketServer } from './server/WebSocketServer';
 import { getLocalNetworkIP, formatConnectionUrls } from './server/NetworkUtils';
 import { FileSyncManager } from './sync/FileSyncManager';
-
-// Placeholder imports - will be implemented in subsequent phases
-// import { WebSocketClient } from './client/WebSocketClient';
-// import { VirtualDocumentProvider } from './client/VirtualDocumentProvider';
+import { WebSocketClient } from './client/WebSocketClient';
+import { VirtualDocumentProvider } from './client/VirtualDocumentProvider';
 
 let statusBar: StatusBarManager;
 let serverInstance: WebSocketServer | null = null;
 let fileSyncManager: FileSyncManager | null = null;
-let clientInstance: any = null; // WebSocketClient instance
-let connectionCountTimer: NodeJS.Timeout | undefined;
+let connectionPanel: ConnectionPanel | null = null;
+
+let studentClient: WebSocketClient | null = null;
+let virtualDocProvider: VirtualDocumentProvider | null = null;
+let virtualDocRegistration: vscode.Disposable | null = null;
+let lastFileUpdate: { content: string; language: string; fileName: string } | null = null;
 
 export function activate(context: vscode.ExtensionContext) {
   console.log('Classroom Code Sync extension is now active');
 
-  // Initialize status bar
   statusBar = new StatusBarManager();
   context.subscriptions.push(statusBar);
 
-  // Register teacher commands
+  // Register virtual document provider for student mode
+  virtualDocProvider = new VirtualDocumentProvider();
+  virtualDocRegistration = vscode.workspace.registerTextDocumentContentProvider(
+    VirtualDocumentProvider.scheme,
+    virtualDocProvider
+  );
+  context.subscriptions.push(virtualDocRegistration);
+
+  // Teacher commands
   context.subscriptions.push(
-    vscode.commands.registerCommand(
-      'classroomSync.teacher.startServer',
-      () => startTeacherServer(context)
-    )
+    vscode.commands.registerCommand('classroomSync.teacher.startServer', () => startTeacherServer(context))
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('classroomSync.teacher.stopServer', () => stopTeacherServer())
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('classroomSync.teacher.configureFiles', () => configureFiles())
+  );
+  context.subscriptions.push(
+    vscode.commands.registerCommand('classroomSync.teacher.showConnection', () => showConnectionInfo(context))
   );
 
+  // Student commands
   context.subscriptions.push(
-    vscode.commands.registerCommand(
-      'classroomSync.teacher.stopServer',
-      () => stopTeacherServer()
-    )
+    vscode.commands.registerCommand('classroomSync.student.connect', () => connectAsStudent())
   );
-
   context.subscriptions.push(
-    vscode.commands.registerCommand(
-      'classroomSync.teacher.configureFiles',
-      () => configureFiles()
-    )
+    vscode.commands.registerCommand('classroomSync.student.disconnect', () => disconnectStudent())
   );
-
   context.subscriptions.push(
-    vscode.commands.registerCommand(
-      'classroomSync.teacher.showConnection',
-      () => showConnectionInfo()
-    )
-  );
-
-  // Register student commands
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      'classroomSync.student.connect',
-      () => connectAsStudent(context)
-    )
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      'classroomSync.student.disconnect',
-      () => disconnectStudent()
-    )
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand(
-      'classroomSync.student.copyToWorkspace',
-      () => copyToWorkspace()
-    )
+    vscode.commands.registerCommand('classroomSync.student.copyToWorkspace', () => copyToWorkspace())
   );
 }
 
-/**
- * Start teaching session (teacher mode)
- */
+// ---------------------------------------------------------------------------
+// Teacher: Start
+// ---------------------------------------------------------------------------
 async function startTeacherServer(context: vscode.ExtensionContext): Promise<void> {
-  if (clientInstance) {
-    vscode.window.showWarningMessage(
-      'You are currently connected as a student. Disconnect first before starting a teaching session.'
-    );
+  if (studentClient) {
+    vscode.window.showWarningMessage('Disconnect from student mode first.');
     return;
   }
-
   if (serverInstance) {
-    vscode.window.showInformationMessage('Teaching session is already running');
+    vscode.window.showInformationMessage('Teaching session already running.');
     return;
   }
 
   try {
-    statusBar.showLoading('Starting teaching session...');
+    statusBar.showLoading('Starting...');
 
-    // Get configuration
     const config = vscode.workspace.getConfiguration('classroomSync');
     const port = config.get<number>('server.port', 8765);
     const requireAuth = config.get<boolean>('server.requireAuth', false);
 
-    // Create and start WebSocket server
     serverInstance = new WebSocketServer(port, requireAuth, context);
 
-    // Create and start file sync manager
     const messageBroker = serverInstance.getMessageBroker();
     fileSyncManager = new FileSyncManager(messageBroker);
     fileSyncManager.start();
 
-    // Set up connection count callback
-    startConnectionCountMonitoring();
+    await serverInstance.start();
 
-    // Start the server
-    const { url, localUrl } = await serverInstance.start();
-
-    // Get local network IP for display
     const localIP = getLocalNetworkIP();
     const urls = formatConnectionUrls(port, localIP);
 
     statusBar.setMode(Mode.TEACHER);
     statusBar.setConnectionCount(0);
 
-    // Show success message with connection info
-    const httpUrl = localIP ? urls.httpUrl : localUrl;
-    vscode.window.showInformationMessage(
-      `Teaching session started! Students can connect via browser (${httpUrl}) or VSCode extension.`,
-      'Show Connection Info'
-    ).then((selection) => {
-      if (selection === 'Show Connection Info') {
-        showConnectionInfo();
-      }
-    });
+    // Open the connection panel immediately
+    await openConnectionPanel(urls, context);
+
   } catch (error: any) {
     statusBar.showError('Failed to start');
-    vscode.window.showErrorMessage(`Failed to start teaching session: ${error.message}`);
+    vscode.window.showErrorMessage(`Failed to start session: ${error.message}`);
     serverInstance = null;
   }
 }
 
-/**
- * Stop teaching session (teacher mode)
- */
+// ---------------------------------------------------------------------------
+// Teacher: Stop
+// ---------------------------------------------------------------------------
 async function stopTeacherServer(): Promise<void> {
   if (!serverInstance) {
-    vscode.window.showInformationMessage('No teaching session is currently running');
+    vscode.window.showInformationMessage('No session running.');
     return;
   }
 
   try {
-    stopConnectionCountMonitoring();
-
-    // Stop file sync manager
     if (fileSyncManager) {
       fileSyncManager.stop();
       fileSyncManager.dispose();
       fileSyncManager = null;
     }
 
+    if (connectionPanel) {
+      connectionPanel.dispose();
+      connectionPanel = null;
+    }
+
     await serverInstance.stop();
     serverInstance.dispose();
     serverInstance = null;
     statusBar.setMode(Mode.INACTIVE);
-    vscode.window.showInformationMessage('Teaching session stopped');
+    vscode.window.showInformationMessage('Teaching session stopped.');
   } catch (error: any) {
-    vscode.window.showErrorMessage(`Failed to stop teaching session: ${error.message}`);
-    
-    // Clean up on error
-    if (fileSyncManager) {
-      fileSyncManager.dispose();
-      fileSyncManager = null;
-    }
+    vscode.window.showErrorMessage(`Failed to stop session: ${error.message}`);
+    if (fileSyncManager) { fileSyncManager.dispose(); fileSyncManager = null; }
     serverInstance = null;
   }
 }
 
-/**
- * Configure file filters (teacher mode)
- */
+// ---------------------------------------------------------------------------
+// Teacher: Configure files
+// ---------------------------------------------------------------------------
 async function configureFiles(): Promise<void> {
-  // TODO: Implement file configuration UI
-  vscode.window.showInformationMessage(
-    'File configuration will be implemented in Phase 4'
+  const config = vscode.workspace.getConfiguration('classroomSync.sync');
+  const excludePatterns: string[] = config.get<string[]>('excludePatterns', []);
+
+  const items: vscode.QuickPickItem[] = excludePatterns.map(p => ({
+    label: p,
+    description: 'excluded',
+    picked: true,
+  }));
+
+  const ADD_NEW = '$(add) Add new pattern...';
+  const REMOVE_SELECTED = '$(trash) Remove selected patterns';
+
+  const action = await vscode.window.showQuickPick(
+    [
+      { label: ADD_NEW, description: 'Add a new glob exclusion pattern' },
+      { label: REMOVE_SELECTED, description: 'Remove one or more patterns from the exclusion list' },
+      ...items,
+    ],
+    {
+      placeHolder: 'Current exclude patterns (click to manage)',
+      title: 'Configure Synced Files',
+    }
   );
+
+  if (!action) return;
+
+  if (action.label === ADD_NEW) {
+    const pattern = await vscode.window.showInputBox({
+      prompt: 'Enter glob pattern to exclude (e.g. **/*.secret)',
+      placeHolder: '**/.env',
+    });
+    if (pattern) {
+      const updated = [...excludePatterns, pattern];
+      await config.update('excludePatterns', updated, vscode.ConfigurationTarget.Workspace);
+      vscode.window.showInformationMessage(`Added exclusion: ${pattern}`);
+    }
+  } else if (action.label === REMOVE_SELECTED) {
+    const toRemove = await vscode.window.showQuickPick(
+      excludePatterns.map(p => ({ label: p })),
+      { canPickMany: true, placeHolder: 'Select patterns to remove' }
+    );
+    if (toRemove && toRemove.length > 0) {
+      const removeSet = new Set(toRemove.map(i => i.label));
+      const updated = excludePatterns.filter(p => !removeSet.has(p));
+      await config.update('excludePatterns', updated, vscode.ConfigurationTarget.Workspace);
+      vscode.window.showInformationMessage(`Removed ${toRemove.length} pattern(s).`);
+    }
+  }
 }
 
-/**
- * Show connection information (teacher mode)
- */
-async function showConnectionInfo(): Promise<void> {
+// ---------------------------------------------------------------------------
+// Teacher: Show connection info
+// ---------------------------------------------------------------------------
+async function showConnectionInfo(context: vscode.ExtensionContext): Promise<void> {
   if (!serverInstance) {
-    vscode.window.showWarningMessage('No teaching session is currently running');
+    vscode.window.showWarningMessage('No session running.');
     return;
   }
 
   const sessionConfig = serverInstance.getSessionConfig();
-  if (!sessionConfig) {
-    vscode.window.showWarningMessage('Session configuration not available');
-    return;
-  }
+  if (!sessionConfig) return;
 
-  const connectionCount = serverInstance.getConnectionCount();
   const localIP = getLocalNetworkIP();
   const urls = formatConnectionUrls(sessionConfig.port, localIP);
-
-  // TODO: Implement connection panel with QR code (Phase 6)
-  // For now, show a simple information message
-  const httpUrl = localIP ? urls.httpUrl : urls.httpLocalUrl;
-  const wsUrl = localIP ? urls.wsUrl : urls.wsLocalUrl;
-  
-  // Create detailed info message
-  let info = `Connected Students: ${connectionCount}/50\n\n`;
-  
-  if (localIP) {
-    info += `🌐 Network URL (same WiFi/LAN):\n${httpUrl}\n\n`;
-    info += `📱 Students on the same network can use this URL\n\n`;
-    info += `🖥️  Localhost URL (this computer only):\n${urls.httpLocalUrl}\n\n`;
-    info += `🔌 WebSocket URL (VSCode students): ${wsUrl}\n\n`;
-    info += `📍 Your Network IP: ${localIP}\n\n`;
-    info += `🌍 For remote connections (different networks):\n`;
-    info += `   Use tunneling service (ngrok, localtunnel, etc.)\n`;
-    info += `   See REMOTE_CONNECTION_GUIDE.md for details`;
-  } else {
-    info += `⚠️  Network IP not detected\n\n`;
-    info += `📱 Using localhost (only works on this computer):\n${httpUrl}\n\n`;
-    info += `💡 Tip: Connect to WiFi/LAN for network access\n\n`;
-    info += `🌍 For remote connections:\n`;
-    info += `   Use tunneling service (ngrok, localtunnel, etc.)\n`;
-    info += `   See REMOTE_CONNECTION_GUIDE.md for details`;
-  }
-
-  vscode.window.showInformationMessage(
-    info,
-    localIP ? 'Copy Network URL' : 'Copy Localhost URL',
-    localIP ? 'Copy Localhost URL' : undefined,
-    'Copy WebSocket URL'
-  ).then((selection) => {
-    if (selection === 'Copy Network URL') {
-      vscode.env.clipboard.writeText(httpUrl);
-      vscode.window.showInformationMessage(`Network URL copied! Students on the same WiFi can use: ${httpUrl}`);
-    } else if (selection === 'Copy Localhost URL') {
-      vscode.env.clipboard.writeText(urls.httpLocalUrl);
-      vscode.window.showInformationMessage('Localhost URL copied to clipboard!');
-    } else if (selection === 'Copy WebSocket URL') {
-      vscode.env.clipboard.writeText(wsUrl);
-      vscode.window.showInformationMessage('WebSocket URL copied to clipboard!');
-    }
-  });
+  await openConnectionPanel(urls, context);
 }
 
-/**
- * Connect to teaching session (student mode)
- */
-async function connectAsStudent(context: vscode.ExtensionContext): Promise<void> {
-  if (serverInstance) {
-    vscode.window.showWarningMessage(
-      'You are currently running a teaching session. Stop it first before connecting as a student.'
-    );
-    return;
-  }
+async function openConnectionPanel(
+  urls: { httpUrl: string; wsUrl: string; httpLocalUrl: string; wsLocalUrl: string },
+  context: vscode.ExtensionContext
+): Promise<void> {
+  if (!serverInstance) return;
 
-  if (clientInstance) {
-    vscode.window.showInformationMessage('You are already connected to a teaching session');
-    return;
-  }
+  const httpUrl = urls.httpUrl;
+  const wsUrl = urls.wsUrl;
+  const httpLocalUrl = urls.httpLocalUrl;
 
-  try {
-    // Get teacher's connection URL from user
-    const url = await vscode.window.showInputBox({
-      prompt: 'Enter teacher connection URL (e.g., ws://192.168.1.100:8765)',
-      placeHolder: 'ws://192.168.1.100:8765',
-      validateInput: (value) => {
-        if (!value) {
-          return 'URL is required';
-        }
-        if (!value.startsWith('ws://') && !value.startsWith('wss://')) {
-          return 'URL must start with ws:// or wss://';
-        }
-        return null;
-      },
-    });
-
-    if (!url) {
-      return; // User cancelled
-    }
-
-    statusBar.showLoading('Connecting to teaching session...');
-
-    // TODO: Implement WebSocket client connection
-    vscode.window.showInformationMessage(
-      'Student mode: Client connection will be implemented in Phase 5'
-    );
-
-    statusBar.setMode(Mode.STUDENT);
-    statusBar.setConnected(false);
-  } catch (error: any) {
-    statusBar.showError('Connection failed');
-    vscode.window.showErrorMessage(`Failed to connect: ${error.message}`);
-  }
-}
-
-/**
- * Disconnect from teaching session (student mode)
- */
-async function disconnectStudent(): Promise<void> {
-  if (!clientInstance) {
-    vscode.window.showInformationMessage('You are not connected to any teaching session');
-    return;
-  }
-
-  try {
-    // TODO: Implement client disconnection
-    clientInstance = null;
-    statusBar.setMode(Mode.INACTIVE);
-    vscode.window.showInformationMessage('Disconnected from teaching session');
-  } catch (error: any) {
-    vscode.window.showErrorMessage(`Failed to disconnect: ${error.message}`);
-  }
-}
-
-/**
- * Copy current synced file to workspace (student mode)
- */
-async function copyToWorkspace(): Promise<void> {
-  if (!clientInstance) {
-    vscode.window.showWarningMessage('You are not connected to any teaching session');
-    return;
-  }
-
-  // TODO: Implement copy to workspace functionality
-  vscode.window.showInformationMessage(
-    'Copy to workspace will be implemented in Phase 7'
+  connectionPanel = await ConnectionPanel.show(
+    httpUrl,
+    wsUrl,
+    httpLocalUrl,
+    () => serverInstance?.getConnectionCount() ?? 0,
+    () => stopTeacherServer(),
+    context
   );
 }
 
-/**
- * Start monitoring connection count and update status bar
- */
-function startConnectionCountMonitoring(): void {
-  stopConnectionCountMonitoring(); // Clear any existing timer
-
-  connectionCountTimer = setInterval(() => {
-    if (serverInstance) {
-      const count = serverInstance.getConnectionCount();
-      statusBar.setConnectionCount(count);
-    }
-  }, 1000); // Update every second
-}
-
-/**
- * Stop monitoring connection count
- */
-function stopConnectionCountMonitoring(): void {
-  if (connectionCountTimer) {
-    clearInterval(connectionCountTimer);
-    connectionCountTimer = undefined;
-  }
-}
-
-export function deactivate() {
-  stopConnectionCountMonitoring();
-
-  if (fileSyncManager) {
-    fileSyncManager.dispose();
-    fileSyncManager = null;
-  }
-
+// ---------------------------------------------------------------------------
+// Student: Connect
+// ---------------------------------------------------------------------------
+async function connectAsStudent(): Promise<void> {
   if (serverInstance) {
-    serverInstance.stop().catch((error) => {
-      console.error('Error stopping server on deactivate:', error);
-    });
+    vscode.window.showWarningMessage('Stop the teaching session first.');
+    return;
+  }
+  if (studentClient) {
+    vscode.window.showInformationMessage('Already connected to a session.');
+    return;
+  }
+
+  const url = await vscode.window.showInputBox({
+    prompt: 'Enter teacher WebSocket URL',
+    placeHolder: 'ws://192.168.1.x:8765',
+    validateInput: (v) => {
+      if (!v) return 'URL is required';
+      if (!v.startsWith('ws://') && !v.startsWith('wss://')) return 'Must start with ws:// or wss://';
+      return null;
+    },
+  });
+
+  if (!url) return;
+
+  statusBar.showLoading('Connecting...');
+
+  studentClient = new WebSocketClient(url);
+
+  studentClient.onConnected((sessionId) => {
+    statusBar.setMode(Mode.STUDENT);
+    statusBar.setConnected(true);
+    vscode.window.showInformationMessage(`Connected to teaching session${sessionId ? ` (${sessionId})` : ''}.`);
+  });
+
+  studentClient.onDisconnected(() => {
+    statusBar.setConnected(false);
+  });
+
+  studentClient.onFileUpdate((update) => {
+    lastFileUpdate = { content: update.content, language: update.language, fileName: update.fileName };
+
+    if (virtualDocProvider) {
+      virtualDocProvider.update(update.content, update.language, update.fileName);
+
+      // Open the virtual document (will reuse existing tab if already open)
+      const uri = virtualDocProvider.uri;
+      vscode.workspace.openTextDocument(uri).then((doc) => {
+        vscode.window.showTextDocument(doc, {
+          viewColumn: vscode.ViewColumn.Active,
+          preserveFocus: true,
+          preview: true,
+        });
+      });
+    }
+  });
+
+  studentClient.connect();
+}
+
+// ---------------------------------------------------------------------------
+// Student: Disconnect
+// ---------------------------------------------------------------------------
+async function disconnectStudent(): Promise<void> {
+  if (!studentClient) {
+    vscode.window.showInformationMessage('Not connected to any session.');
+    return;
+  }
+
+  studentClient.disconnect();
+  studentClient = null;
+  lastFileUpdate = null;
+  statusBar.setMode(Mode.INACTIVE);
+  vscode.window.showInformationMessage('Disconnected from teaching session.');
+}
+
+// ---------------------------------------------------------------------------
+// Student: Copy to workspace
+// ---------------------------------------------------------------------------
+async function copyToWorkspace(): Promise<void> {
+  if (!lastFileUpdate) {
+    vscode.window.showWarningMessage('No code received yet. Connect and wait for the teacher to share a file.');
+    return;
+  }
+
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders || workspaceFolders.length === 0) {
+    vscode.window.showErrorMessage('Open a workspace folder first.');
+    return;
+  }
+
+  const targetFolder = workspaceFolders[0].uri;
+  const suggestedName = lastFileUpdate.fileName.replace(/[/\\]/g, '_');
+
+  const fileName = await vscode.window.showInputBox({
+    prompt: 'Save as filename',
+    value: suggestedName,
+  });
+
+  if (!fileName) return;
+
+  const targetUri = vscode.Uri.joinPath(targetFolder, fileName);
+  const encoder = new TextEncoder();
+  await vscode.workspace.fs.writeFile(targetUri, encoder.encode(lastFileUpdate.content));
+
+  const doc = await vscode.workspace.openTextDocument(targetUri);
+  await vscode.window.showTextDocument(doc);
+  vscode.window.showInformationMessage(`Saved to ${fileName}`);
+}
+
+// ---------------------------------------------------------------------------
+// Deactivate
+// ---------------------------------------------------------------------------
+export function deactivate() {
+  if (fileSyncManager) { fileSyncManager.dispose(); fileSyncManager = null; }
+  if (connectionPanel) { connectionPanel.dispose(); connectionPanel = null; }
+  if (serverInstance) {
+    serverInstance.stop().catch(console.error);
     serverInstance.dispose();
     serverInstance = null;
   }
-
-  if (clientInstance) {
-    // TODO: Clean up client
-    clientInstance = null;
-  }
+  if (studentClient) { studentClient.disconnect(); studentClient = null; }
+  if (virtualDocProvider) { virtualDocProvider.dispose(); virtualDocProvider = null; }
 }

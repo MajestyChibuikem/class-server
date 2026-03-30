@@ -25,7 +25,7 @@ async function main() {
           });
           
           // Handle other dependencies - keep them bundled or external as needed
-          build.onResolve({ filter: /^(ws|ip|nanoid|minimatch)$/ }, args => {
+          build.onResolve({ filter: /^(ws|ip|nanoid|minimatch|qrcode)$/ }, args => {
             // These should be bundled, so we don't mark them external
             return null;
           });
