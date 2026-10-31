@@ -1,252 +1,113 @@
-# VSCode Classroom Code Sync Extension - Implementation Plan
+# Classroom Code Sync
 
-## Overview
+Classroom Code Sync is a Visual Studio Code extension for broadcasting an instructor's active file to students in real time. The instructor runs a local HTTP/WebSocket server from VS Code; students can follow the shared code in a browser or in another VS Code window.
 
-Build a VSCode extension that enables real-time code viewing for classroom teaching. The instructor starts a local WebSocket server from VSCode, and up to 50 students can connect via browser to view live code updates as the instructor types.
+## What it does
 
-## Requirements Summary
+- **Teacher sessions:** Start and stop a teaching session from the VS Code Command Palette. The server listens on the configured port and supports up to 150 concurrent clients.
+- **Live code broadcast:** The active editor's file is sent when the teacher switches files. Edits to that file are sent after a configurable debounce delay (500 ms by default).
+- **Browser student view:** Students open the teacher's HTTP URL on a phone, tablet, or computer. The page shows the current file, syntax highlighting and line numbers, connection status, and a button to copy the code.
+- **VS Code student view:** Students can connect using the teacher's WebSocket URL. Incoming code appears in a read-only virtual document that updates as the teacher shares files. Students can use **Classroom: Copy Current File to Workspace (Student)** to save the latest received content into their own workspace.
+- **Connection panel:** Starting a session opens a panel with a QR code and shareable URLs, a live student count, and a stop-session button. The QR code opens the browser viewer.
+- **File controls:** Include and exclude glob patterns control which files may be shared. By default, common sensitive and generated files are excluded, binary files are skipped, and files over 1 MB are not sent.
+- **Reconnect handling:** Browser and VS Code student clients attempt to reconnect after an interruption, with increasing delays. Student clients also send periodic heartbeats.
 
-- **Teacher Mode**: Start local WebSocket server, select which files to sync, broadcast changes
-- **Student Mode**: Connect via browser (read-only), receive real-time updates
-- **Scale**: Support ~50 concurrent student connections
-- **Sync**: Files sync as teacher switches between them, with file filtering control
-- **Fresh Project**: Starting from empty directory
+The extension broadcasts the **active text editor's content**; it does not synchronize student edits back to the teacher or copy entire workspaces.
 
-## Architecture
+## Requirements
 
-### High-Level Design
+- Visual Studio Code 1.85.0 or later
+- Node.js and npm to build or run the extension from source
 
-```
-Teacher VSCode → WebSocket Server → Student Browsers (50 clients)
-                  (Local Network)
-```
+## Build and run from source
 
-### Technology Stack
-
-- **VSCode Extension API** (1.85.0+)
-- **WebSocket Server**: `ws` library (^8.14.0)
-- **TypeScript** (5.3+)
-- **Build Tool**: esbuild
-- **Additional**: Express (static content), QRCode (connection sharing), ip (network detection)
-
-### Communication Protocol
-
-**Teacher → Students Messages**:
-- `file_update`: Content changes (debounced 500ms)
-- `file_switch`: Active file changed
-- `connected`: Initial connection success
-- `server_closing`: Server shutdown
-
-**Students → Teacher Messages**:
-- `auth`: Optional authentication
-- `ping`: Heartbeat (every 30s)
-
-## Project Structure
-
-```
-class-server/
-├── src/
-│   ├── extension/
-│   │   ├── extension.ts              # Main entry point
-│   │   ├── commands/
-│   │   │   ├── startServer.ts        # Start server command
-│   │   │   ├── stopServer.ts         # Stop server command
-│   │   │   └── configureFiles.ts     # File filtering UI
-│   │   ├── server/
-│   │   │   ├── WebSocketServer.ts    # WebSocket server
-│   │   │   ├── ConnectionManager.ts  # Client tracking
-│   │   │   └── MessageBroker.ts      # Message routing
-│   │   ├── sync/
-│   │   │   ├── FileSyncManager.ts    # File change tracking
-│   │   │   ├── FileFilter.ts         # Include/exclude logic
-│   │   │   └── ContentProvider.ts    # File content preparation
-│   │   └── ui/
-│   │       ├── ConnectionPanel.ts    # Connection info webview
-│   │       └── StatusBar.ts          # Status bar integration
-│   └── client/
-│       ├── index.html                # Student viewer
-│       ├── styles.css                # Student viewer styles
-│       └── client.js                 # WebSocket client logic
-├── package.json                      # Extension manifest
-├── tsconfig.json                     # TypeScript config
-└── esbuild.js                        # Build script
+```bash
+npm install
+npm run build
 ```
 
-## Core Components
+Open the project folder in VS Code and press **F5** (Run > Start Debugging) to launch an Extension Development Host. The extension can then be tested in that separate VS Code window.
 
-### 1. Extension Entry Point (`extension.ts`)
+Useful development commands:
 
-- Activate on `onStartupFinished` or command
-- Register commands (start/stop/configure)
-- Initialize status bar
-- Manage server lifecycle
+```bash
+npm run watch    # Rebuild when source files change
+npm run compile  # Run the TypeScript compiler
+npm run lint     # Lint the TypeScript source
+```
 
-### 2. WebSocket Server (`WebSocketServer.ts`)
+## Start a teaching session
 
-- Create WebSocket server on port 8765 (configurable)
-- Serve static HTML client via HTTP
-- Handle WebSocket upgrade requests
-- Broadcast messages to all connected clients
-- Graceful shutdown
+1. In the Extension Development Host, open the folder containing the code to share.
+2. Open the Command Palette (`Cmd+Shift+P` on macOS, `Ctrl+Shift+P` on Windows/Linux).
+3. Run **Classroom: Start Teaching Session (Teacher)**.
+4. Use the connection panel's QR code or **WiFi URL** for browser students. For a student using VS Code, share the **WebSocket URL** instead.
+5. To end the session, use the panel's **Stop Session** button or run **Classroom: Stop Teaching Session (Teacher)**.
 
-### 3. Connection Manager (`ConnectionManager.ts`)
+The status bar shows the session's student count. Click it to reopen the connection panel. **Classroom: Show Connection Info (Teacher)** also opens the panel.
 
-- Track active WebSocket connections (up to 50)
-- Assign unique IDs to clients
-- Implement heartbeat/timeout (30s ping, 60s timeout)
-- Provide connection statistics
-- Clean up disconnected clients
+## Connect as a student
 
-### 4. File Sync Manager (`FileSyncManager.ts`)
+### Browser
 
-- Listen to `vscode.window.onDidChangeActiveTextEditor` (file switch)
-- Listen to `vscode.workspace.onDidChangeTextDocument` (edits)
-- Debounce rapid changes (500ms)
-- Check file against filter rules
-- Trigger message broadcast via MessageBroker
+Open the teacher's HTTP/WiFi URL in a browser. The browser viewer connects to the WebSocket server at the same host and port. Students can scan the QR code displayed in the teacher's connection panel to open this page.
 
-### 5. File Filter (`FileFilter.ts`)
+### VS Code
 
-- Support glob patterns for include/exclude
-- Default exclusions: `**/.env`, `**/node_modules/**`, `**/.git/**`, `**/*.key`
-- Persist configuration in workspace settings
-- Provide UI for pattern management
+In the student's VS Code window, run **Classroom: Connect to Teaching Session (Student)** and enter the teacher's WebSocket URL (`ws://...` or `wss://...`). The shared file appears in a read-only `classroom-sync` document. To keep a local copy, run **Classroom: Copy Current File to Workspace (Student)** after code has been received.
 
-### 6. Student Client (`client/index.html`)
+## Commands
 
-- Vanilla JavaScript (no framework)
-- WebSocket connection with auto-reconnect
-- Syntax highlighting using Prism.js
-- Connection status indicator
-- Responsive design for tablets/laptops
+| Command | Purpose |
+| --- | --- |
+| **Classroom: Start Teaching Session (Teacher)** | Start a teacher server and open the connection panel. |
+| **Classroom: Stop Teaching Session (Teacher)** | Stop the server and disconnect clients. |
+| **Classroom: Show Connection Info (Teacher)** | Show the URLs, QR code, and connected-student count. |
+| **Classroom: Configure Synced Files (Teacher)** | Add or remove file exclusion patterns. |
+| **Classroom: Connect to Teaching Session (Student)** | Connect this VS Code window to a teacher using a WebSocket URL. |
+| **Classroom: Disconnect from Session (Student)** | Disconnect the VS Code student client. |
+| **Classroom: Copy Current File to Workspace (Student)** | Save the latest received code as a workspace file. |
 
-### 7. Connection Panel (`ConnectionPanel.ts`)
+## Settings
 
-- WebView panel showing connection URL
-- QR code for easy mobile access
-- Real-time connection count
-- Copy URL and Stop Server buttons
+Open VS Code Settings and search for `classroomSync`.
 
-## Implementation Phases
+| Setting | Default | Description |
+| --- | --- | --- |
+| `classroomSync.server.port` | `8765` | HTTP/WebSocket server port (1024–65535). |
+| `classroomSync.server.requireAuth` | `false` | Authentication option currently present in settings. **Token validation is not implemented**, so enabling this setting does not protect the server. |
+| `classroomSync.sync.debounceMs` | `500` | Delay before broadcasting edits to the active file (100–5000 ms). File switches are sent immediately. |
+| `classroomSync.sync.includePatterns` | `[]` | Optional glob allowlist. When non-empty, a file must match at least one pattern to be shared. |
+| `classroomSync.sync.excludePatterns` | See below | Glob patterns excluded from sharing. Exclusions take precedence over includes. |
+| `classroomSync.sync.maxFileSize` | `1048576` | Maximum file content size in bytes (1 KB–10 MB). |
 
-### Phase 1: Foundation
-1. Initialize npm project with TypeScript
-2. Configure build system (esbuild)
-3. Create basic extension structure
-4. Register commands and status bar
-5. Test extension activation
+Default exclusions:
 
-### Phase 2: WebSocket Server
-1. Implement WebSocketServer class
-2. Set up HTTP server for static content
-3. Create basic ConnectionManager
-4. Test server start/stop and basic connections
+```text
+**/.env
+**/.env.*
+**/node_modules/**
+**/.git/**
+**/*.key
+**/*.pem
+**/*.p12
+**/*.pfx
+**/credentials.json
+**/.vscode/**
+```
 
-### Phase 3: Student Client
-1. Build HTML/CSS/JS client
-2. Implement WebSocket connection logic
-3. Add auto-reconnect with exponential backoff
-4. Create connection status UI
+The **Configure Synced Files** command manages exclusion patterns; include patterns and other options can be changed in VS Code Settings. Untitled files, files outside the workspace (when a workspace folder applies), likely binary files, and files above the size limit are not broadcast.
 
-### Phase 4: File Synchronization
-1. Implement FileSyncManager with VSCode listeners
-2. Add debouncing logic
-3. Implement MessageBroker for broadcasting
-4. Test end-to-end file sync
+## Network access
 
-### Phase 5: File Filtering & Security
-1. Implement FileFilter with glob matching
-2. Add default security exclusions
-3. Create file configuration UI
-4. Test filtering rules
+The server binds to `0.0.0.0` and can accept connections from devices that can reach the host and port. On a local network, share the network URL shown in the connection panel. For remote students, a VPN or a tunneling service that forwards HTTP and WebSocket traffic to the configured port may be used. The remote connection walkthroughs are in [REMOTE_CONNECTION_GUIDE.md](./REMOTE_CONNECTION_GUIDE.md) and [REMOTE_SETUP.md](./REMOTE_SETUP.md); see [NETWORK_GUIDE.md](./NETWORK_GUIDE.md) for local-network details.
 
-### Phase 6: UI Polish
-1. Implement ConnectionPanel with QR code
-2. Add syntax highlighting to client (Prism.js)
-3. Enhance status bar with connection count
-4. Add theme toggle to student viewer
+**Security:** Anyone who can reach the server may connect and receive the shared files. The server does not currently enforce authentication, even when `classroomSync.server.requireAuth` is enabled. Carefully review the active file and filter settings, use a trusted network, and stop the session when finished. Do not expose the server to an untrusted network.
 
-### Phase 7: Testing & Documentation
-1. Write unit tests for core components
-2. Test with 50 concurrent connections
-3. Write comprehensive README
-4. Create demo/screenshots
+## More guides
 
-## Security Measures
-
-1. **File Access Control**:
-   - Only sync files matching configured patterns
-   - Default blacklist for sensitive files (.env, *.key, etc.)
-   - Never sync outside workspace boundary
-
-2. **Network Security**:
-   - Bind to local network interface only
-   - Optional token authentication
-   - Rate limiting on connection attempts
-
-3. **Content Security**:
-   - Read-only client (no code execution)
-   - File size limits (1MB default)
-   - Binary file blocking
-
-## Configuration Settings
-
-- `classroomSync.server.port`: Default port (8765)
-- `classroomSync.server.requireAuth`: Token authentication (default: false)
-- `classroomSync.sync.debounceMs`: Debounce delay (500ms)
-- `classroomSync.sync.includePatterns`: Files to include (glob)
-- `classroomSync.sync.excludePatterns`: Files to exclude (glob)
-- `classroomSync.sync.maxFileSize`: Max file size (1MB)
-
-## Key Design Decisions
-
-### WebSocket over HTTP Polling
-- Lower latency and bandwidth
-- Native browser support
-- Industry standard for real-time apps
-
-### Vanilla `ws` Library vs Socket.io
-- Simpler, fewer dependencies
-- Better performance for our use case
-- Smaller bundle size
-
-### Browser Client vs VSCode Extension for Students
-- No installation required
-- Works on tablets/phones
-- Easier classroom setup
-
-### Debouncing vs Throttling
-- Waits for pause before syncing
-- Better UX (no flickering)
-- File switches bypass debounce for immediacy
-
-## Critical Files to Create
-
-1. `package.json` - Extension manifest with commands, settings, dependencies
-2. `src/extension/extension.ts` - Main orchestrator
-3. `src/extension/server/WebSocketServer.ts` - Network communication
-4. `src/extension/sync/FileSyncManager.ts` - File change tracking
-5. `src/extension/server/ConnectionManager.ts` - Client lifecycle
-6. `src/client/index.html` - Student viewer
-7. `src/extension/sync/FileFilter.ts` - Security filtering
-8. `src/extension/ui/ConnectionPanel.ts` - Teacher UI
-
-## Remote Connections
-
-The extension supports connections from **anywhere** using tunneling services:
-
-- **Same Network:** Automatic - works with local network IP
-- **Different Networks:** Use tunneling (ngrok, localtunnel, etc.) - see [REMOTE_CONNECTION_GUIDE.md](./REMOTE_CONNECTION_GUIDE.md)
-- **VSCode to VSCode:** Students can connect via WebSocket URL from any network
-
-The extension accepts any valid URL, so it works seamlessly with:
-- ✅ Local network IPs
-- ✅ Tunneling service URLs (ngrok, localtunnel)
-- ✅ VPN IPs
-- ✅ Port-forwarded URLs
-
-See [REMOTE_SETUP.md](./REMOTE_SETUP.md) for quick setup instructions.
-
-## Next Steps
-
-[This section will be updated based on user feedback]
+- [QUICK_START.md](./QUICK_START.md) — quick development and manual test walkthrough
+- [TESTING.md](./TESTING.md) — detailed testing guide
+- [NETWORK_GUIDE.md](./NETWORK_GUIDE.md) — connecting on a local network
+- [REMOTE_CONNECTION_GUIDE.md](./REMOTE_CONNECTION_GUIDE.md) — remote connection approaches
+- [REMOTE_SETUP.md](./REMOTE_SETUP.md) — quick remote setup
