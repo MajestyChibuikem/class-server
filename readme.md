@@ -1,87 +1,132 @@
 # Classroom Code Sync
 
-Classroom Code Sync is a Visual Studio Code extension for broadcasting an instructor's active file to students in real time. The instructor runs a local HTTP/WebSocket server from VS Code; students can follow the shared code in a browser or in another VS Code window.
+Classroom Code Sync is a Visual Studio Code extension built for Computer Science classrooms and computer labs. It broadcasts an instructor's active file to students' VS Code windows in real time and provides an automated, tamper-proof attendance system using a distributed cryptographic ledger.
 
-## What it does
+Students view the shared code directly on their own laptop screens without having to raise their heads or squint at a distant projector screen.
 
-- **Teacher sessions:** Start and stop a teaching session from the VS Code Command Palette. The server listens on the configured port and supports up to 150 concurrent clients.
-- **Live code broadcast:** The active editor's file is sent when the teacher switches files. Edits to that file are sent after a configurable debounce delay (500 ms by default).
-- **Browser student view:** Students open the teacher's HTTP URL on a phone, tablet, or computer. The page shows the current file, syntax highlighting and line numbers, connection status, and a button to copy the code.
-- **VS Code student view:** Students can connect using the teacher's WebSocket URL. Incoming code appears in a read-only virtual document that updates as the teacher shares files. Students can use **Classroom: Copy Current File to Workspace (Student)** to save the latest received content into their own workspace.
-- **Connection panel:** Starting a session opens a panel with a QR code and shareable URLs, a live student count, and a stop-session button. The QR code opens the browser viewer.
-- **File controls:** Include and exclude glob patterns control which files may be shared. By default, common sensitive and generated files are excluded, binary files are skipped, and files over 1 MB are not sent.
-- **Reconnect handling:** Browser and VS Code student clients attempt to reconnect after an interruption, with increasing delays. Student clients also send periodic heartbeats.
+---
 
-The extension broadcasts the **active text editor's content**; it does not synchronize student edits back to the teacher or copy entire workspaces.
+## Key Features
+
+### 1. Live Code Broadcasting & Native Split-Screen
+- **Zero Projector Strain**: Students follow live coding on their own laptop screens inside their native VS Code environment.
+- **Dual-Pane 13-Inch Layout**:
+  - **Left Pane (Total Code)**: The complete file. Students can scroll up or down freely to inspect imports, helper functions, and types at their own pace.
+  - **Right Pane (Live Focus)**: Automatically follows the teacher in real time. Highlights the teacher's active cursor line and text selections, auto-scrolling to keep the current explanation in view.
+- **Instant File Switches & Debounced Edits**: Switching files broadcasts immediately; typing edits are debounced (500 ms by default) to minimize network traffic on busy classroom Wi-Fi.
+- **Save to Workspace**: Students can use **Classroom: Copy Current File to Workspace (Student)** to save the broadcasted code directly into their local project.
+
+### 2. Automated Attendance & Distributed Ledger
+- **No Manual Roll Calls**: Attendance is collected automatically over the local LAN without disrupting the lecture.
+- **Strict "One Device, One Attendance"**: Each student's identity is cryptographically bound to their laptop's unique hardware identifier (`vscode.env.machineId`). If a student attempts to check in a friend using the same laptop, the server rejects the request.
+- **Randomized Check-In**: The server triggers a silent attendance challenge at an unpredictable moment during the lecture. Only students whose laptops are actively connected and running VS Code are verified as present.
+- **"Everyone Carries the Ledger" (Distributed Cryptographic Storage)**:
+  - Each check-in is linked using an append-only $\text{SHA-256}$ hash chain.
+  - When attendance is finalized, the server silently broadcasts the sealed ledger to **every connected student's laptop**.
+  - Every student's VS Code stores a local, tamper-evident digital copy of the day's attendance block for proof-of-attendance and disaster recovery (if the teacher's laptop is lost or damaged).
+
+### 3. Offline-First Outbox Dispatcher
+- **100% Local LAN Operation**: The extension requires zero internet access during class. Code streaming and attendance run over the local classroom Wi-Fi router or hotspot.
+- **Long-Term Offline Queue**: If the lecturer's laptop is offline for days or weeks, sealed session ledgers are safely encrypted on disk (`globalStorageUri`).
+- **Automatic Background Sync**: Once the lecturer connects to the internet (at home or the office), the background outbox worker automatically flushes pending ledgers to the remote institutional attendance server with idempotency (no duplicate records).
+
+### 4. Security & Privacy
+- **Workspace Boundary Enforcement**: Files outside the teacher's workspace folder are never shared.
+- **Automatic Exclusions**: Sensitive files (`.env*`, `*.key`, `*.pem`, `credentials.json`, `node_modules/`, `.git/`, etc.) and binary files are blocked from broadcasting by default.
+- **Read-Only Virtual Documents**: The synchronized code is served via VS Code's `classroom-sync://` virtual document scheme, preventing students from accidentally modifying the synchronized buffer.
+
+---
 
 ## Requirements
 
-- Visual Studio Code 1.85.0 or later
-- Node.js and npm to build or run the extension from source
+- **Visual Studio Code**: Version 1.85.0 or later
+- **Operating System**: macOS, Windows, or Linux
+- **Network**: Local Area Network (Wi-Fi router, local network, or laptop mobile hotspot) connecting the teacher and students
 
-## Build and run from source
+---
+
+## Getting Started
+
+### 1. Build and Run from Source
 
 ```bash
 npm install
 npm run build
 ```
 
-Open the project folder in VS Code and press **F5** (Run > Start Debugging) to launch an Extension Development Host. The extension can then be tested in that separate VS Code window.
+To run and debug the extension:
+1. Open the project folder in VS Code.
+2. Press **F5** (or Run > Start Debugging) to launch an Extension Development Host window.
 
-Useful development commands:
+---
 
-```bash
-npm run watch    # Rebuild when source files change
-npm run compile  # Run the TypeScript compiler
-npm run lint     # Lint the TypeScript source
-```
+## Teacher Guide
 
-## Start a teaching session
-
-1. In the Extension Development Host, open the folder containing the code to share.
+1. Open the folder containing the lecture code in VS Code.
 2. Open the Command Palette (`Cmd+Shift+P` on macOS, `Ctrl+Shift+P` on Windows/Linux).
 3. Run **Classroom: Start Teaching Session (Teacher)**.
-4. Use the connection panel's QR code or **WiFi URL** for browser students. For a student using VS Code, share the **WebSocket URL** instead.
-5. To end the session, use the panel's **Stop Session** button or run **Classroom: Stop Teaching Session (Teacher)**.
+4. The **Connection Panel** opens, displaying:
+   - The WebSocket connection URL (e.g. `ws://192.168.1.50:8765`).
+   - A live count of connected students.
+   - Attendance status and current ledger hash.
+   - A **Trigger Attendance Now** button (for on-demand check-in during testing).
+5. Share the WebSocket URL with students.
+6. Open any code file and start teaching. Switch files or highlight code—students will see the updates on their screens instantly.
+7. When class is over, click **Stop Session** in the panel or run **Classroom: Stop Teaching Session (Teacher)**. The session ledger is sealed and queued for dispatch.
 
-The status bar shows the session's student count. Click it to reopen the connection panel. **Classroom: Show Connection Info (Teacher)** also opens the panel.
+---
 
-## Connect as a student
+## Student Guide
 
-### Browser
+1. Open VS Code on your laptop.
+2. Run **Classroom: Connect to Teaching Session (Student)**.
+3. If connecting for the first time, VS Code will prompt you for:
+   - **Full Name** (e.g., *Jane Doe*)
+   - **Student / Matriculation ID** (e.g., *CSC/2022/0142*)
+4. Enter the teacher's WebSocket URL (e.g., `ws://192.168.1.50:8765`).
+5. Two side-by-side tabs will open:
+   - **Total Code**: Scroll and review the entire file freely.
+   - **Live Focus**: Stays locked to the teacher's cursor and highlights.
+6. **Attendance**: You do not need to do anything. During class, your VS Code will silently respond to the teacher's randomized check-in challenge and save the synchronized class attendance ledger locally.
+7. To save the code locally at any point, run **Classroom: Copy Current File to Workspace (Student)**.
+8. To disconnect, run **Classroom: Disconnect from Session (Student)**.
 
-Open the teacher's HTTP/WiFi URL in a browser. The browser viewer connects to the WebSocket server at the same host and port. Students can scan the QR code displayed in the teacher's connection panel to open this page.
-
-### VS Code
-
-In the student's VS Code window, run **Classroom: Connect to Teaching Session (Student)** and enter the teacher's WebSocket URL (`ws://...` or `wss://...`). The shared file appears in a read-only `classroom-sync` document. To keep a local copy, run **Classroom: Copy Current File to Workspace (Student)** after code has been received.
+---
 
 ## Commands
 
-| Command | Purpose |
-| --- | --- |
-| **Classroom: Start Teaching Session (Teacher)** | Start a teacher server and open the connection panel. |
-| **Classroom: Stop Teaching Session (Teacher)** | Stop the server and disconnect clients. |
-| **Classroom: Show Connection Info (Teacher)** | Show the URLs, QR code, and connected-student count. |
-| **Classroom: Configure Synced Files (Teacher)** | Add or remove file exclusion patterns. |
-| **Classroom: Connect to Teaching Session (Student)** | Connect this VS Code window to a teacher using a WebSocket URL. |
-| **Classroom: Disconnect from Session (Student)** | Disconnect the VS Code student client. |
-| **Classroom: Copy Current File to Workspace (Student)** | Save the latest received code as a workspace file. |
+| Command | Role | Description |
+| :--- | :--- | :--- |
+| `classroomSync.teacher.startServer` | Teacher | Start teaching session and open the connection panel. |
+| `classroomSync.teacher.stopServer` | Teacher | Stop session, seal the attendance ledger, and disconnect students. |
+| `classroomSync.teacher.showConnection` | Teacher | Reveal the connection panel with live student count & ledger status. |
+| `classroomSync.teacher.triggerAttendance` | Teacher | Trigger an immediate attendance challenge check-in. |
+| `classroomSync.teacher.configureFiles` | Teacher | Manage file exclusion patterns. |
+| `classroomSync.student.connect` | Student | Connect to a teacher's session using their WebSocket URL. |
+| `classroomSync.student.disconnect` | Student | Disconnect from the current session. |
+| `classroomSync.student.copyToWorkspace` | Student | Save the currently received code into the local workspace. |
+| `classroomSync.student.updateProfile` | Student | Update saved Full Name and Student ID. |
+
+---
 
 ## Settings
 
-Open VS Code Settings and search for `classroomSync`.
+Configure settings in VS Code Preferences (`Cmd+,` or `Ctrl+,`), searching for `classroomSync`.
 
 | Setting | Default | Description |
-| --- | --- | --- |
-| `classroomSync.server.port` | `8765` | HTTP/WebSocket server port (1024–65535). |
-| `classroomSync.server.requireAuth` | `false` | Authentication option currently present in settings. **Token validation is not implemented**, so enabling this setting does not protect the server. |
-| `classroomSync.sync.debounceMs` | `500` | Delay before broadcasting edits to the active file (100–5000 ms). File switches are sent immediately. |
-| `classroomSync.sync.includePatterns` | `[]` | Optional glob allowlist. When non-empty, a file must match at least one pattern to be shared. |
-| `classroomSync.sync.excludePatterns` | See below | Glob patterns excluded from sharing. Exclusions take precedence over includes. |
-| `classroomSync.sync.maxFileSize` | `1048576` | Maximum file content size in bytes (1 KB–10 MB). |
+| :--- | :--- | :--- |
+| `classroomSync.server.port` | `8765` | WebSocket server port (1024–65535). |
+| `classroomSync.sync.debounceMs` | `500` | Typing debounce delay in milliseconds (100–5000 ms). |
+| `classroomSync.sync.includePatterns` | `[]` | Optional allowlist glob patterns. When non-empty, only matching files are synced. |
+| `classroomSync.sync.excludePatterns` | *(See below)* | Glob patterns excluded from sync. Exclusions take precedence over includes. |
+| `classroomSync.sync.maxFileSize` | `1048576` | Maximum file size in bytes (1 MB default). |
+| `classroomSync.student.name` | `""` | Student's full name for attendance check-in. |
+| `classroomSync.student.id` | `""` | Student's ID / Matriculation number for attendance check-in. |
+| `classroomSync.attendance.serverUrl` | `""` | Optional remote API endpoint to upload sealed attendance ledgers. |
+| `classroomSync.attendance.randomMin` | `5` | Minimum minutes into the class before randomized check-in triggers. |
+| `classroomSync.attendance.randomMax` | `30` | Maximum minutes into the class before randomized check-in triggers. |
 
-Default exclusions:
+### Default Exclusions
 
 ```text
 **/.env
@@ -96,18 +141,12 @@ Default exclusions:
 **/.vscode/**
 ```
 
-The **Configure Synced Files** command manages exclusion patterns; include patterns and other options can be changed in VS Code Settings. Untitled files, files outside the workspace (when a workspace folder applies), likely binary files, and files above the size limit are not broadcast.
+---
 
-## Network access
+## Classroom Network Setup
 
-The server binds to `0.0.0.0` and can accept connections from devices that can reach the host and port. On a local network, share the network URL shown in the connection panel. For remote students, a VPN or a tunneling service that forwards HTTP and WebSocket traffic to the configured port may be used. The remote connection walkthroughs are in [REMOTE_CONNECTION_GUIDE.md](./REMOTE_CONNECTION_GUIDE.md) and [REMOTE_SETUP.md](./REMOTE_SETUP.md); see [NETWORK_GUIDE.md](./NETWORK_GUIDE.md) for local-network details.
-
-**Security:** Anyone who can reach the server may connect and receive the shared files. The server does not currently enforce authentication, even when `classroomSync.server.requireAuth` is enabled. Carefully review the active file and filter settings, use a trusted network, and stop the session when finished. Do not expose the server to an untrusted network.
-
-## More guides
-
-- [QUICK_START.md](./QUICK_START.md) — quick development and manual test walkthrough
-- [TESTING.md](./TESTING.md) — detailed testing guide
-- [NETWORK_GUIDE.md](./NETWORK_GUIDE.md) — connecting on a local network
-- [REMOTE_CONNECTION_GUIDE.md](./REMOTE_CONNECTION_GUIDE.md) — remote connection approaches
-- [REMOTE_SETUP.md](./REMOTE_SETUP.md) — quick remote setup
+- **Same Wi-Fi Network**: Both the teacher and students must be on the same local network.
+- **Campus Wi-Fi Tip (Client Isolation)**: Many campus Wi-Fi networks block peer-to-peer communication between laptops. If students cannot connect to the teacher's IP:
+  1. Turn on the teacher's laptop **Wi-Fi Hotspot** (or a smartphone hotspot / portable travel router).
+  2. Have students connect their laptops to that hotspot.
+  3. No internet connection is required—code streaming and attendance ledger syncing work 100% locally.
